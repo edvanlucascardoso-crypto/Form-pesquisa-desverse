@@ -1,0 +1,719 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pesquisa — Gestão e Comunicação de Pequenos Negócios</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Inter', sans-serif; }
+    .fade-in { animation: fadeIn 0.3s ease-in-out; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+    .option-card { transition: all 0.15s ease; }
+    .option-card:hover { border-color: #3b82f6; background-color: #eff6ff; }
+    .option-card.selected { border-color: #2563eb; background-color: #eff6ff; box-shadow: 0 0 0 2px #bfdbfe; }
+    .option-card.selected .check-indicator { opacity: 1; transform: scale(1); }
+    .check-indicator { opacity: 0; transform: scale(0.5); transition: all 0.2s ease; }
+    input[type="text"], textarea { transition: border-color 0.2s, box-shadow 0.2s; }
+    input[type="text"]:focus, textarea:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.15); }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-800 min-h-screen">
+
+  <div id="root" class="max-w-2xl mx-auto px-4 py-8"></div>
+
+  <script>
+    // ============================================================
+    // COMPONENTES REUTILIZÁVEIS
+    // ============================================================
+
+    const UI = {
+      // Container principal
+      Container: (children) => `<div class="fade-in">${children}</div>`,
+
+      // Header do formulário
+      Header: ({ title, subtitle }) => `
+        <div class="mb-8 text-center">
+          <h1 class="text-2xl font-bold text-slate-900 mb-2">${title}</h1>
+          <p class="text-slate-500 text-sm">${subtitle}</p>
+        </div>
+      `,
+
+      // Barra de progresso
+      ProgressBar: ({ current, total, percent }) => `
+        <div class="mb-8">
+          <div class="flex justify-between text-xs text-slate-500 mb-2">
+            <span>Pergunta ${current} de ${total}</span>
+            <span>${Math.round(percent)}%</span>
+          </div>
+          <div class="w-full h-2 bg-slate-200 rounded-full overflow-hidden">
+            <div class="h-full bg-blue-600 rounded-full transition-all duration-500 ease-out" style="width: ${percent}%"></div>
+          </div>
+        </div>
+      `,
+
+      // Card de opção (radio ou checkbox)
+      OptionCard: ({ id, name, value, label, type, checked, onChange, isOther, otherValue }) => {
+        const inputType = type === 'multiple' ? 'checkbox' : 'radio';
+        const isSelected = checked ? 'selected' : '';
+        const otherInput = isOther ? `
+          <input 
+            type="text" 
+            id="other-${id}" 
+            value="${otherValue || ''}" 
+            placeholder="Especifique..."
+            class="mt-2 w-full px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white"
+            oninput="App.handleOtherInput('${name}', this.value)"
+            onclick="event.stopPropagation()"
+          />
+        ` : '';
+        return `
+          <div 
+            class="option-card ${isSelected} border border-slate-200 rounded-xl p-4 cursor-pointer bg-white mb-3"
+            onclick="App.toggleOption('${name}', '${value}', '${type}')"
+          >
+            <div class="flex items-start gap-3">
+              <div class="mt-0.5 w-5 h-5 rounded-full border-2 ${type === 'multiple' ? (checked ? 'border-blue-600 bg-blue-600' : 'border-slate-300') : (checked ? 'border-blue-600 bg-blue-600' : 'border-slate-300')} flex items-center justify-center flex-shrink-0">
+                ${type === 'multiple' 
+                  ? (checked ? '<svg class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>' : '')
+                  : (checked ? '<div class="w-2 h-2 bg-white rounded-full"></div>' : '')
+                }
+              </div>
+              <div class="flex-1">
+                <span class="text-sm font-medium text-slate-700">${label}</span>
+                ${otherInput}
+              </div>
+            </div>
+          </div>
+        `;
+      },
+
+      // Campo de texto
+      TextField: ({ id, value, placeholder, onInput, required }) => `
+        <input 
+          type="text" 
+          id="${id}" 
+          value="${value || ''}" 
+          placeholder="${placeholder || ''}"
+          class="w-full px-4 py-3 border border-slate-300 rounded-xl bg-white text-sm"
+          oninput="${onInput}"
+          ${required ? 'required' : ''}
+        />
+      `,
+
+      // Textarea
+      TextArea: ({ id, value, placeholder, onInput, rows = 4 }) => `
+        <textarea 
+          id="${id}" 
+          rows="${rows}"
+          placeholder="${placeholder || ''}"
+          class="w-full px-4 py-3 border border-slate-300 rounded-xl bg-white text-sm resize-none"
+          oninput="${onInput}"
+        >${value || ''}</textarea>
+      `,
+
+      // Checkbox simples
+      Checkbox: ({ id, checked, label, onChange }) => `
+        <label class="flex items-center gap-3 cursor-pointer p-4 border border-slate-200 rounded-xl bg-white hover:bg-slate-50 transition-colors">
+          <input 
+            type="checkbox" 
+            id="${id}" 
+            ${checked ? 'checked' : ''} 
+            onchange="${onChange}"
+            class="w-5 h-5 text-blue-600 rounded border-slate-300 focus:ring-blue-500"
+          />
+          <span class="text-sm text-slate-700">${label}</span>
+        </label>
+      `,
+
+      // Botões de navegação
+      NavButtons: ({ showPrev, showNext, nextLabel, onPrev, onNext, nextDisabled }) => `
+        <div class="flex gap-3 mt-8">
+          ${showPrev ? `
+            <button 
+              onclick="${onPrev}"
+              class="px-6 py-3 border border-slate-300 text-slate-600 rounded-xl font-medium text-sm hover:bg-slate-50 transition-colors"
+            >
+              Anterior
+            </button>
+          ` : '<div></div>'}
+          <button 
+            onclick="${onNext}"
+            ${nextDisabled ? 'disabled' : ''}
+            class="flex-1 px-6 py-3 ${nextDisabled ? 'bg-slate-300 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'} text-white rounded-xl font-medium text-sm transition-colors"
+          >
+            ${nextLabel}
+          </button>
+        </div>
+      `,
+
+      // Tela de agradecimento
+      ThankYou: ({ onNewInterview, onSendWhatsApp }) => `
+        <div class="text-center py-12 fade-in">
+          <div class="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6">
+            <svg class="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+            </svg>
+          </div>
+          <h2 class="text-2xl font-bold text-slate-900 mb-3">Obrigado pela participação!</h2>
+          <p class="text-slate-500 mb-8 max-w-md mx-auto">Sua resposta foi salva. Clique abaixo para enviar pelo WhatsApp ou inicie uma nova entrevista.</p>
+
+          <div class="flex flex-col gap-3 max-w-sm mx-auto">
+            <a 
+              href="${onSendWhatsApp}" 
+              target="_blank"
+              class="px-6 py-4 bg-green-600 hover:bg-green-700 text-white rounded-xl font-semibold text-sm transition-colors flex items-center justify-center gap-2"
+            >
+              <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/>
+              </svg>
+              Enviar respostas por WhatsApp
+            </a>
+            <button 
+              onclick="${onNewInterview}"
+              class="px-6 py-3 border border-slate-300 text-slate-600 rounded-xl font-medium text-sm hover:bg-slate-50 transition-colors"
+            >
+              Nova entrevista
+            </button>
+          </div>
+        </div>
+      `,
+
+      // Alerta de erro
+      ErrorAlert: (message) => `
+        <div class="mb-4 p-4 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm font-medium">
+          ${message}
+        </div>
+      `,
+
+      // Título de seção
+      SectionTitle: (title) => `
+        <h2 class="text-lg font-semibold text-slate-900 mb-1">${title}</h2>
+        <div class="w-12 h-1 bg-blue-600 rounded-full mb-6"></div>
+      `
+    };
+
+    // ============================================================
+    // DEFINIÇÃO DAS PERGUNTAS
+    // ============================================================
+
+    const SURVEY_DATA = [
+      {
+        id: 'p1', section: 'Seção 1: Perfil do Respondente', question: 'Qual a sua faixa etária?',
+        type: 'single', required: true,
+        options: [
+          { value: 'menos25', label: 'Menos de 25 anos' },
+          { value: '25-30', label: '25 a 30 anos' },
+          { value: '31-40', label: '31 a 40 anos' },
+          { value: '41-50', label: '41 a 50 anos' },
+          { value: '51-60', label: '51 a 60 anos' },
+          { value: 'mais60', label: 'Mais de 60 anos' }
+        ]
+      },
+      {
+        id: 'p2', section: 'Seção 1: Perfil do Respondente', question: 'Quantos negócios você possui ou gerencia atualmente?',
+        type: 'single', required: true,
+        options: [
+          { value: '1', label: 'Apenas 1' },
+          { value: '2', label: '2' },
+          { value: '3', label: '3' },
+          { value: '4+', label: '4 ou mais' }
+        ]
+      },
+      {
+        id: 'p3', section: 'Seção 1: Perfil do Respondente', question: 'Em qual(is) setor(es) atua o seu principal negócio?',
+        type: 'multiple', required: true,
+        options: [
+          { value: 'alimentacao', label: 'Alimentação (restaurante, lanchonete, bar, padaria)' },
+          { value: 'varejo', label: 'Comércio varejista (loja física, e-commerce pequeno)' },
+          { value: 'servicos', label: 'Serviços gerais (estética, mecânica, limpeza, transporte)' },
+          { value: 'industria', label: 'Indústria / fabricação' },
+          { value: 'construcao', label: 'Construção civil' },
+          { value: 'tecnologia', label: 'Tecnologia / digital' },
+          { value: 'outro', label: 'Outro', isOther: true }
+        ]
+      },
+      {
+        id: 'p4', section: 'Seção 1: Perfil do Respondente', question: 'Sua cidade tem aproximadamente quantos habitantes?',
+        type: 'single', required: true,
+        options: [
+          { value: 'ate20k', label: 'Até 20 mil' },
+          { value: '20k-50k', label: '20 mil a 50 mil' },
+          { value: '50k-200k', label: '50 mil a 200 mil' },
+          { value: '200k-1m', label: '200 mil a 1 milhão' },
+          { value: 'mais1m', label: 'Mais de 1 milhão' }
+        ]
+      },
+      {
+        id: 'p5', section: 'Seção 1: Perfil do Respondente', question: 'Quantas pessoas trabalham com você nos seus negócios (soma total)?',
+        type: 'single', required: true,
+        options: [
+          { value: 'soeu', label: 'Só eu' },
+          { value: '2-5', label: '2 a 5 pessoas' },
+          { value: '6-15', label: '6 a 15 pessoas' },
+          { value: '16-50', label: '16 a 50 pessoas' },
+          { value: 'mais50', label: 'Mais de 50 pessoas' }
+        ]
+      },
+      {
+        id: 'p6', section: 'Seção 2: Comunicação e Divulgação Hoje', question: 'Como você divulga seus negócios hoje?',
+        type: 'multiple', required: true,
+        options: [
+          { value: 'rede-social-eu', label: 'Instagram / Facebook (posto eu mesmo)' },
+          { value: 'rede-social-pago', label: 'Instagram / Facebook (pago para alguém postar)' },
+          { value: 'whatsapp', label: 'WhatsApp (status, grupos, broadcast)' },
+          { value: 'indicacao', label: 'Indicação de clientes' },
+          { value: 'offline', label: 'Panfleto / outdoor / rádio local' },
+          { value: 'google', label: 'Google Meu Negócio' },
+          { value: 'nao-divulgo', label: 'Não faço divulgação ativa' },
+          { value: 'outro', label: 'Outro', isOther: true }
+        ]
+      },
+      {
+        id: 'p7', section: 'Seção 2: Comunicação e Divulgação Hoje', question: 'Com que frequência você publica conteúdo nas redes sociais dos seus negócios?',
+        type: 'single', required: true,
+        options: [
+          { value: 'diario', label: 'Todos os dias' },
+          { value: '3-5x-semana', label: '3 a 5 vezes por semana' },
+          { value: '1-2x-semana', label: '1 a 2 vezes por semana' },
+          { value: '1-3x-mes', label: '1 a 3 vezes por mês' },
+          { value: 'raramente', label: 'Raramente ou nunca' }
+        ]
+      },
+      {
+        id: 'p8', section: 'Seção 2: Comunicação e Divulgação Hoje', question: 'Quem cria o conteúdo (texto + imagem) que você publica?',
+        type: 'single', required: true,
+        options: [
+          { value: 'eu', label: 'Eu mesmo' },
+          { value: 'funcionario', label: 'Um funcionário meu' },
+          { value: 'freelancer', label: 'Contrato freelancer de vez em quando' },
+          { value: 'agencia', label: 'Contrato agência fixa' },
+          { value: 'nao-publico', label: 'Não publico conteúdo' }
+        ]
+      },
+      {
+        id: 'p9', section: 'Seção 2: Comunicação e Divulgação Hoje', question: 'Quanto você gasta por mês, em média, com divulgação dos seus negócios?',
+        type: 'single', required: true,
+        options: [
+          { value: 'nada', label: 'Nada' },
+          { value: 'ate200', label: 'Até R$ 200' },
+          { value: '201-500', label: 'R$ 201 a R$ 500' },
+          { value: '501-1500', label: 'R$ 501 a R$ 1.500' },
+          { value: '1501-5000', label: 'R$ 1.501 a R$ 5.000' },
+          { value: 'mais5000', label: 'Mais de R$ 5.000' }
+        ]
+      },
+      {
+        id: 'p10', section: 'Seção 3: Dores e Frustrações', question: 'Qual é a sua MAIOR dificuldade em divulgar seus negócios?',
+        type: 'single', required: true,
+        options: [
+          { value: 'sem-tempo', label: 'Não tenho tempo para criar conteúdo' },
+          { value: 'sem-ideia', label: 'Não sei o que postar / falta de criatividade' },
+          { value: 'sem-resultado', label: 'O conteúdo que faço não traz resultado (vendas, clientes)' },
+          { value: 'caro', label: 'É caro contratar alguém para fazer isso' },
+          { value: 'demora-qualidade', label: 'As pessoas que contrato demoram ou não entregam qualidade' },
+          { value: 'nao-vejo-valor', label: 'Não vejo valor em divulgação digital; meu negócio cresce de outro jeito' },
+          { value: 'outro', label: 'Outro', isOther: true }
+        ]
+      },
+      {
+        id: 'p11', section: 'Seção 3: Dores e Frustrações', question: 'Você já tentou fazer a divulgação sozinho e desistiu ou ficou insatisfeito?',
+        type: 'single', required: true,
+        options: [
+          { value: 'sim-varias', label: 'Sim, mais de uma vez' },
+          { value: 'sim-uma', label: 'Sim, uma vez' },
+          { value: 'nunca', label: 'Nunca tentei' },
+          { value: 'tento-constancia', label: 'Tento, mas nunca consigo manter constância' }
+        ]
+      },
+      {
+        id: 'p12', section: 'Seção 3: Dores e Frustrações', question: 'Se você pudesse resolver UM problema só na divulgação dos seus negócios, qual seria?',
+        type: 'single', required: true,
+        options: [
+          { value: 'posts-prontos', label: 'Ter alguém que criasse posts prontos para eu só aprovar' },
+          { value: 'calendario', label: 'Saber exatamente o que postar em cada dia da semana' },
+          { value: 'gastar-menos', label: 'Gastar menos com divulgação sem perder qualidade' },
+          { value: 'profissional-sem-designer', label: 'Ter imagens e textos profissionais sem precisar contratar designer' },
+          { value: 'publicar-auto', label: 'Publicar automaticamente sem eu ter que lembrar' },
+          { value: 'nenhum', label: 'Nenhum; não é um problema que me afeta' }
+        ]
+      },
+      {
+        id: 'p13', section: 'Seção 4: Comportamento de Compra e Ferramentas', question: 'Você já pagou por alguma ferramenta digital para ajudar no seu negócio?',
+        type: 'multiple', required: true,
+        options: [
+          { value: 'canva', label: 'Canva (gratuito ou pago)' },
+          { value: 'edicao', label: 'Algum programa de edição de foto/vídeo' },
+          { value: 'agendamento', label: 'Algum aplicativo de agendamento de posts' },
+          { value: 'erp', label: 'Sistema de gestão (ERP, PDV, controle de estoque)' },
+          { value: 'nenhuma', label: 'Nunca paguei por nenhuma ferramenta digital' },
+          { value: 'outro', label: 'Outro', isOther: true }
+        ]
+      },
+      {
+        id: 'p14', section: 'Seção 4: Comportamento de Compra e Ferramentas', question: 'O que mais te faz desistir de uma ferramenta nova nos primeiros 30 dias?',
+        type: 'single', required: true,
+        options: [
+          { value: 'dificil', label: 'É difícil de usar; não entendi como funciona' },
+          { value: 'nao-entregou', label: 'Não entregou o resultado que prometeu' },
+          { value: 'caro', label: 'Achei caro para o que resolve' },
+          { value: 'demora-config', label: 'Demorou muito para configurar' },
+          { value: 'sem-suporte', label: 'Não tinha suporte quando precisei' },
+          { value: 'nao-desisto', label: 'Não desisto; uso tudo que testo' }
+        ]
+      },
+      {
+        id: 'p15', section: 'Seção 4: Comportamento de Compra e Ferramentas', question: 'Você prefere pagar por uma ferramenta de que forma?',
+        type: 'single', required: true,
+        options: [
+          { value: 'mensal', label: 'Assinatura mensal fixa (ex: R$ 99/mês, uso o quanto quiser)' },
+          { value: 'por-uso', label: 'Só pelo que usar (ex: R$ 2 por post criado)' },
+          { value: 'unico', label: 'Pagamento único, uso para sempre' },
+          { value: 'freemium', label: 'Gratuito com limitações, pago só se precisar de mais' },
+          { value: 'nao-pagaria', label: 'Não pagaria por ferramenta digital' }
+        ]
+      },
+      {
+        id: 'p16', section: 'Seção 5: Valor e Disposição a Pagar', question: 'Se existisse um serviço que criasse posts prontos com imagem e texto para seus negócios, quanto você pagaria por mês?',
+        type: 'single', required: true,
+        options: [
+          { value: 'nao-pagaria', label: 'Não pagaria; faria eu mesmo ou deixaria de fazer' },
+          { value: 'ate50', label: 'Até R$ 50' },
+          { value: '51-100', label: 'R$ 51 a R$ 100' },
+          { value: '101-150', label: 'R$ 101 a R$ 150' },
+          { value: '151-250', label: 'R$ 151 a R$ 250' },
+          { value: '251-500', label: 'R$ 251 a R$ 500' },
+          { value: 'mais500', label: 'Mais de R$ 500' }
+        ]
+      },
+      {
+        id: 'p17', section: 'Seção 5: Valor e Disposição a Pagar', question: 'Esse serviço ideal para você deveria incluir:',
+        type: 'single', required: true,
+        options: [
+          { value: 'apenas-criar', label: 'Apenas criar o conteúdo (eu baixo e posto onde quiser)' },
+          { value: 'criar-publicar', label: 'Criar e já publicar direto no Instagram/Facebook para mim' },
+          { value: 'criar-publicar-responder', label: 'Criar, publicar e ainda responder comentários/mensagens' },
+          { value: 'sugestao', label: 'Só me dizer o que postar; eu crio o resto' }
+        ]
+      },
+      {
+        id: 'p18', section: 'Seção 5: Valor e Disposição a Pagar', question: 'Qual visual de aplicativo você mais gosta?',
+        type: 'single', required: true,
+        options: [
+          { value: 'limpo', label: 'Limpo e profissional, tipo Excel ou planilha' },
+          { value: 'colorido', label: 'Colorido e divertido, tipo jogo ou rede social' },
+          { value: 'simples', label: 'Simples e direto, tipo WhatsApp' },
+          { value: 'nao-importa', label: 'Não me importo com visual; só quero que funcione' }
+        ]
+      },
+      {
+        id: 'p19', section: 'Seção 6: Abertura', question: 'Se você pudesse pedir uma coisa para quem vai ler esta pesquisa, o que diria?',
+        type: 'text', required: false, placeholder: 'Escreva aqui (opcional)...'
+      }
+    ];
+
+    // ============================================================
+    // APLICAÇÃO PRINCIPAL
+    // ============================================================
+
+    const App = {
+      state: {
+        currentIndex: 0,
+        answers: {},
+        otherValues: {},
+        showError: false,
+        finished: false,
+        startTime: Date.now(),
+        responseId: ''
+      },
+
+      init() {
+        this.loadFromStorage();
+        if (!this.state.responseId) {
+          this.state.responseId = this.generateId();
+        }
+        this.render();
+      },
+
+      generateId() {
+        const now = new Date();
+        const date = now.toISOString().slice(0,10).replace(/-/g,'');
+        const random = Math.floor(Math.random() * 900 + 100);
+        return `RESP-${date}-${random}`;
+      },
+
+      loadFromStorage() {
+        try {
+          const saved = localStorage.getItem('survey_current');
+          if (saved) {
+            const parsed = JSON.parse(saved);
+            this.state = { ...this.state, ...parsed };
+          }
+        } catch (e) { console.error('Erro ao carregar:', e); }
+      },
+
+      saveToStorage() {
+        try {
+          localStorage.setItem('survey_current', JSON.stringify({
+            currentIndex: this.state.currentIndex,
+            answers: this.state.answers,
+            otherValues: this.state.otherValues,
+            startTime: this.state.startTime,
+            responseId: this.state.responseId
+          }));
+        } catch (e) { console.error('Erro ao salvar:', e); }
+      },
+
+      toggleOption(questionId, value, type) {
+        this.state.showError = false;
+        const current = this.state.answers[questionId] || [];
+
+        if (type === 'multiple') {
+          if (current.includes(value)) {
+            this.state.answers[questionId] = current.filter(v => v !== value);
+          } else {
+            this.state.answers[questionId] = [...current, value];
+          }
+        } else {
+          this.state.answers[questionId] = [value];
+        }
+
+        this.saveToStorage();
+        this.render();
+      },
+
+      handleOtherInput(questionId, value) {
+        this.state.otherValues[questionId] = value;
+        this.saveToStorage();
+      },
+
+      handleTextInput(questionId, value) {
+        this.state.showError = false;
+        this.state.answers[questionId] = [value];
+        this.saveToStorage();
+      },
+
+      validateCurrent() {
+        const q = SURVEY_DATA[this.state.currentIndex];
+        if (!q.required) return true;
+
+        const answer = this.state.answers[q.id];
+        if (!answer || answer.length === 0) return false;
+
+        // Se a resposta for "outro", precisa ter texto no other
+        if (answer.includes('outro') && q.type === 'multiple') {
+          const otherText = this.state.otherValues[q.id];
+          if (!otherText || otherText.trim() === '') return false;
+        }
+
+        return true;
+      },
+
+      next() {
+        if (!this.validateCurrent()) {
+          this.state.showError = true;
+          this.render();
+          return;
+        }
+
+        if (this.state.currentIndex < SURVEY_DATA.length - 1) {
+          this.state.currentIndex++;
+          this.state.showError = false;
+          this.saveToStorage();
+          this.render();
+        } else {
+          this.finish();
+        }
+      },
+
+      prev() {
+        if (this.state.currentIndex > 0) {
+          this.state.currentIndex--;
+          this.state.showError = false;
+          this.saveToStorage();
+          this.render();
+        }
+      },
+
+      finish() {
+        if (!this.validateCurrent()) {
+          this.state.showError = true;
+          this.render();
+          return;
+        }
+
+        // Salvar no histórico
+        const allResponses = JSON.parse(localStorage.getItem('survey_history') || '[]');
+        allResponses.push({
+          id: this.state.responseId,
+          timestamp: new Date().toISOString(),
+          answers: { ...this.state.answers },
+          otherValues: { ...this.state.otherValues }
+        });
+        localStorage.setItem('survey_history', JSON.stringify(allResponses));
+
+        this.state.finished = true;
+        localStorage.removeItem('survey_current');
+        this.render();
+      },
+
+      newInterview() {
+        this.state = {
+          currentIndex: 0,
+          answers: {},
+          otherValues: {},
+          showError: false,
+          finished: false,
+          startTime: Date.now(),
+          responseId: this.generateId()
+        };
+        this.saveToStorage();
+        this.render();
+      },
+
+      getLabelForValue(questionId, value) {
+        const q = SURVEY_DATA.find(q => q.id === questionId);
+        if (!q) return value;
+        const opt = q.options.find(o => o.value === value);
+        if (!opt) return value;
+        if (opt.isOther && this.state.otherValues[questionId]) {
+          return `Outro: ${this.state.otherValues[questionId]}`;
+        }
+        return opt.label;
+      },
+
+      buildWhatsAppMessage() {
+        const now = new Date();
+        const dateStr = now.toLocaleString('pt-BR');
+        const duration = Math.round((Date.now() - this.state.startTime) / 60000);
+
+        let text = `📋 *Resposta de Pesquisa*\n`;
+        text += `ID: ${this.state.responseId}\n`;
+        text += `Data: ${dateStr}\n`;
+        text += `Duração: ${duration} min\n`;
+        text += `─────────────────────\n\n`;
+
+        let currentSection = '';
+        SURVEY_DATA.forEach(q => {
+          const answer = this.state.answers[q.id];
+          if (!answer || answer.length === 0) return;
+
+          if (q.section !== currentSection) {
+            currentSection = q.section;
+            text += `*${currentSection}*\n`;
+          }
+
+          const labels = answer.map(v => this.getLabelForValue(q.id, v));
+          text += `• ${q.question}\n`;
+          text += `  → ${labels.join(' | ')}\n\n`;
+        });
+
+        text += `─────────────────────\n`;
+        text += `Esta pesquisa faz parte de um estudo independente sobre gestão de pequenos negócios. Dados para análise agregada apenas.`;
+
+        return text;
+      },
+
+      getWhatsAppLink() {
+        const message = this.buildWhatsAppMessage();
+        const encoded = encodeURIComponent(message);
+        return `https://wa.me/5517996484654?text=${encoded}`;
+      },
+
+      render() {
+        const root = document.getElementById('root');
+
+        if (this.state.finished) {
+          root.innerHTML = UI.ThankYou({
+            onNewInterview: 'App.newInterview()',
+            onSendWhatsApp: this.getWhatsAppLink()
+          });
+          return;
+        }
+
+        const q = SURVEY_DATA[this.state.currentIndex];
+        const total = SURVEY_DATA.length;
+        const percent = ((this.state.currentIndex + 1) / total) * 100;
+        const isLast = this.state.currentIndex === total - 1;
+
+        let questionHTML = '';
+
+        if (q.type === 'single' || q.type === 'multiple') {
+          const currentAnswers = this.state.answers[q.id] || [];
+          questionHTML = q.options.map(opt => {
+            const checked = currentAnswers.includes(opt.value);
+            const otherVal = opt.isOther ? this.state.otherValues[q.id] : '';
+            return UI.OptionCard({
+              id: `${q.id}-${opt.value}`,
+              name: q.id,
+              value: opt.value,
+              label: opt.label,
+              type: q.type,
+              checked,
+              isOther: opt.isOther,
+              otherValue: otherVal
+            });
+          }).join('');
+        } else if (q.type === 'text') {
+          const value = (this.state.answers[q.id] || [])[0] || '';
+          questionHTML = UI.TextArea({
+            id: q.id,
+            value,
+            placeholder: q.placeholder,
+            onInput: `App.handleTextInput('${q.id}', this.value)`
+          });
+        }
+
+        const sectionTitle = this.state.currentIndex === 0 || 
+          SURVEY_DATA[this.state.currentIndex - 1].section !== q.section
+          ? UI.SectionTitle(q.section)
+          : '';
+
+        root.innerHTML = UI.Container(`
+          ${UI.Header({
+            title: 'Pesquisa de Campo',
+            subtitle: 'Gestão e Comunicação de Pequenos Negócios no Brasil'
+          })}
+
+          ${UI.ProgressBar({
+            current: this.state.currentIndex + 1,
+            total,
+            percent
+          })}
+
+          ${sectionTitle}
+
+          <div class="mb-6">
+            <h3 class="text-base font-medium text-slate-800 mb-1">${q.question}</h3>
+            ${q.type === 'multiple' ? '<p class="text-xs text-slate-400 mb-4">Você pode marcar mais de uma opção</p>' : ''}
+            ${q.required ? '<p class="text-xs text-slate-400 mb-4">* Obrigatório</p>' : '<p class="text-xs text-slate-400 mb-4">Opcional</p>'}
+          </div>
+
+          ${this.state.showError ? UI.ErrorAlert('Por favor, selecione uma resposta para continuar.') : ''}
+
+          <div class="space-y-1">
+            ${questionHTML}
+          </div>
+
+          ${UI.NavButtons({
+            showPrev: this.state.currentIndex > 0,
+            showNext: true,
+            nextLabel: isLast ? 'Finalizar e enviar' : 'Próxima',
+            onPrev: 'App.prev()',
+            onNext: 'App.next()',
+            nextDisabled: false
+          })}
+
+          <p class="text-center text-xs text-slate-400 mt-6">
+            Pesquisa independente • Dados para análise agregada
+          </p>
+        `);
+      }
+    };
+
+    // Iniciar
+    document.addEventListener('DOMContentLoaded', () => App.init());
+  </script>
+</body>
+</html>
